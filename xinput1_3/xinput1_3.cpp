@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <fstream>
 
+// Structure change as documented here https://github.com/mumble-voip/mumble/issues/2019
 typedef struct
 {
 	WORD wButtons;
@@ -30,17 +31,27 @@ typedef struct
 	XINPUT_GAMEPAD_EX Gamepad;
 } XINPUT_STATE_EX;
 
+// Hashing structure for GUID
 namespace std
 {
 	template<> struct hash<GUID> : public std::_Bitwise_hash<GUID>{};
 }
-
+// DI stuff
 LPDIRECTINPUT8 di;
 BOOL diAvailable = true;
-std::unordered_map<GUID, LPDIRECTINPUTDEVICE8> joysticks;
-std::unordered_map<GUID, BOOL> isXInput;
-std::unordered_map<GUID, DIJOYSTATE2> joystick_state;
 
+// Serves as cache
+std::unordered_map<GUID, BOOL> isXInput;
+
+// Active DI-only devices only
+std::unordered_map<GUID, LPDIRECTINPUTDEVICE8> joysticks;
+std::unordered_map<GUID, DIJOYSTATE2> joystickStates;
+
+// All XInput states and wether it is plugged in or not
+XINPUT_STATE_EX xinputStates[4];
+bool xinputReady[4];
+
+// Defines which device is connected to which port
 struct VirtualControllerMapping
 {
 	bool free = true;
@@ -48,12 +59,11 @@ struct VirtualControllerMapping
 	short xinput = -1;
 	GUID guid;
 };
-XINPUT_STATE_EX xinputStates[4];
-bool xinputReady[4];
+// The mapping table
 VirtualControllerMapping virtualControllers[2];
+
+// Internal timer to launch the detection of DI devices
 int timer = 0;
-
-
 
 /* Wrapper DLL stuff...not important */
 #pragma region Wrapper DLL Stuff
@@ -69,7 +79,7 @@ BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved ) {
 		for ( int i = 0; i < 12; i++ )
 			mProcs[ i ] = (UINT_PTR)GetProcAddress( mHinstDLL, mImportNames[ i ] );
 	} else if ( fdwReason == DLL_PROCESS_DETACH ) {
-		// Releasing resources
+		// Releasing resources to avoid crashes
 		for (auto it : joysticks) {
 			if (it.second) {
 				it.second->Unacquire();
@@ -274,7 +284,7 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context)
 
 	// Store the joystick instance accessible via guid
 	joysticks[instance->guidInstance] = joystick;
-	joystick_state[instance->guidInstance];
+	joystickStates[instance->guidInstance];
 
 	// Set the cooperative level to let DInput know how this device should
 	// interact with the system and with other DInput applications.
@@ -431,14 +441,14 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 
 		// Read DI joysticks
 		for (auto it = joysticks.begin(); it != joysticks.end(); ) {
-			LPDIJOYSTATE2 state = &joystick_state[it->first];
+			LPDIJOYSTATE2 state = &joystickStates[it->first];
 			// Poll the device
 			if (FAILED(poll(it->second, state))) {
 				// We cant poll the device
 				// it must be removed from the list of available joysticks
 				it->second->Unacquire();
 				it->second->Release();
-				joystick_state.erase(it->first);
+				joystickStates.erase(it->first);
 				it = joysticks.erase(it);
 				continue;
 			}
@@ -496,7 +506,7 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 	}
 
 	// Do the actual mapping now
-	LPDIJOYSTATE2 js = &joystick_state[mapping->guid];
+	LPDIJOYSTATE2 js = &joystickStates[mapping->guid];
 	pState->dwPacketNumber = GetTickCount();
 
 	//If the DirectInput Controller is bound to this slot, inject button inputs
