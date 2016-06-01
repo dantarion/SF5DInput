@@ -526,11 +526,11 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 		pState->Gamepad.wButtons |= XINPUT_GAMEPAD_LEFT_SHOULDER;
 	if (js->rgbButtons[6])
 		pState->Gamepad.bLeftTrigger = 255;
-	if (js->rgbButtons[7])
-		pState->Gamepad.wButtons |= XINPUT_GAMEPAD_START;
 	if (js->rgbButtons[8])
 		pState->Gamepad.wButtons |= XINPUT_GAMEPAD_BACK;
 	if (js->rgbButtons[9])
+		pState->Gamepad.wButtons |= XINPUT_GAMEPAD_START;
+	if (js->rgbButtons[10])
 		pState->Gamepad.wButtons |= XINPUT_GAMEPAD_LEFT_THUMB;
 	if (js->rgbButtons[11])
 		pState->Gamepad.wButtons |= XINPUT_GAMEPAD_RIGHT_THUMB;
