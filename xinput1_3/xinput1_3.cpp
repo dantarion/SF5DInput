@@ -64,7 +64,6 @@ VirtualControllerMapping virtualControllers[2];
 
 // Internal timer to launch the detection of DI devices
 int timer = 0;
-
 /* Wrapper DLL stuff...not important */
 #pragma region Wrapper DLL Stuff
 HINSTANCE mHinst = 0, mHinstDLL = 0;
@@ -284,7 +283,6 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context)
 
 	// Store the joystick instance accessible via guid
 	joysticks[instance->guidInstance] = joystick;
-	joystickStates[instance->guidInstance];
 
 	// Set the cooperative level to let DInput know how this device should
 	// interact with the system and with other DInput applications.
@@ -341,11 +339,13 @@ int setupDInput()
 // From a DI state, check if we want a controller change
 // Returns -1 if nothing must change, or the id of the controller
 int readDirectInputControllerChange(DIJOYSTATE2* input) {
+	// Home is selected (or SELECT + START)
+	BOOL homeSelected = (input->rgbButtons[8] && input->rgbButtons[9]) || input->rgbButtons[12];
 	//If DirectInput HOME + LPAD RIGHT
-	if ((input->rgdwPOV[0] == 5 * 4500 || input->rgdwPOV[0] == 6 * 4500 || input->rgdwPOV[0] == 7 * 4500) && input->rgbButtons[12])
+	if ((input->rgdwPOV[0] == 5 * 4500 || input->rgdwPOV[0] == 6 * 4500 || input->rgdwPOV[0] == 7 * 4500) && homeSelected)
 		return 0;
 	//If DirectInput HOME + DPAD RIGHT
-	if ((input->rgdwPOV[0] == 1 * 4500 || input->rgdwPOV[0] == 2 * 4500 || input->rgdwPOV[0] == 3 * 4500) && input->rgbButtons[12])
+	if ((input->rgdwPOV[0] == 1 * 4500 || input->rgdwPOV[0] == 2 * 4500 || input->rgdwPOV[0] == 3 * 4500) && homeSelected)
 		return 1;
 	return -1;
 }
@@ -359,7 +359,7 @@ int readXInputControllerChange(XINPUT_STATE_EX* input) {
 	if (guideSelected && (input->Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT)) {
 		return 0;
 	}
-	if (guideSelected && (input->Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT)) {
+	if (guideSelected && (input->Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT)) {
 		return 1;
 	}
 	return -1;
@@ -376,18 +376,19 @@ BOOL mappingContains(VirtualControllerMapping* mapping, const GUID* dinputGUID, 
 	return mapping->xinput == xinputIndex;
 }
 
-
-void selectController(int desired, const GUID* dinputGUID, short xinputIndex) {
+void selectController(int desired, const GUID* dinputGUID, short xinputIndex, BOOL isNew) {
 	if (desired < 0) {
+		if (!isNew) {
+			return;
+		}
 		// Nothing is desired BUT if a place is free then...
 		if (virtualControllers[0].free && !mappingContains(&virtualControllers[1], dinputGUID, xinputIndex)) {
-			selectController(0, dinputGUID, xinputIndex);
+			selectController(0, dinputGUID, xinputIndex, true);
 		} else if (virtualControllers[1].free && !mappingContains(&virtualControllers[0], dinputGUID, xinputIndex)) {
-			selectController(1, dinputGUID, xinputIndex);
+			selectController(1, dinputGUID, xinputIndex, true);
 		}
 		return;
 	}
-
 	VirtualControllerMapping* targetMapping = &virtualControllers[desired];
 	if (mappingContains(targetMapping, dinputGUID, xinputIndex)) {
 		// We already have the right one on the desired index
@@ -396,15 +397,9 @@ void selectController(int desired, const GUID* dinputGUID, short xinputIndex) {
 	
 	// Selecting the controller now...
 	VirtualControllerMapping* otherMapping = &virtualControllers[1-desired];
-	if (!targetMapping->free) {
-		// If we require a controller that is already taken, swap the two
+	if (mappingContains(otherMapping, dinputGUID, xinputIndex)) {
+		// If we require a mapping while we were on the other one, swap first
 		*otherMapping = *targetMapping;
-	} else {
-		// If we switch to a free space
-		if (mappingContains(otherMapping, dinputGUID, xinputIndex)) {
-			// Release the one if we had before
-			otherMapping->free = true;
-		}
 	}
 
 	// Set the actual mapping
@@ -441,7 +436,9 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 
 		// Read DI joysticks
 		for (auto it = joysticks.begin(); it != joysticks.end(); ) {
+			BOOL isNew = joystickStates.find(it->first) == joystickStates.end();
 			LPDIJOYSTATE2 state = &joystickStates[it->first];
+
 			// Poll the device
 			if (FAILED(poll(it->second, state))) {
 				// We cant poll the device
@@ -456,7 +453,7 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 			// Check if the device wants to be changed
 			int desired = readDirectInputControllerChange(state);
 			// Set the virtual controller if necessary
-			selectController(desired, &it->first, -1);
+			selectController(desired, &it->first, -1, isNew);
 			++it;
 		}
 
@@ -467,11 +464,12 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 				xinputReady[i] = false;
 				continue;
 			}
+			BOOL isNew = !xinputReady[i];
 			xinputReady[i] = true;
 			// Check if the device wants to be changed
 			int desired = readXInputControllerChange(&xinputStates[i]);
 			// Set the virtual controller if necessary
-			selectController(desired, NULL, i);
+			selectController(desired, NULL, i, isNew);
 		}
 	}
 
