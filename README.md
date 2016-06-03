@@ -7,24 +7,26 @@ This is a drop in DLL replacement for *xinput1_3.dll* that provides DirectInput 
 
 Drop all included files into *installdirectory\StreetFighterV\Binaries\Win64\* and launch the game. To uninstall, just remove the dll files from this folder.
 
-## Features (as of alpha release)
+## Features
 
-1. A single DirectInput controller will work, alongside XInput controllers.
-2. By holding the Home Button and left or right on the DPad, you can switch between being player 1 or player 2 on the DirectInput controller.
+1. Supports DirectInput as well as XInput devices
+2. By holding the Home Button and left or right on the DPad, you can switch between being player 1 or player 2 on any controller (on XInput controller Start+Back can be used if it's not working).
+3. You can plug or unplug your devices while the game is running
+4. Devices are automatically assigned (first plugged, first player assigned, places are kept).
 
 ## Known Bugs
 
-1. This currently only supports a single DirectInput controller
-2. The DirectInput controller cannot be unplugged and replugged without restarting the game
-3. Doesn't work with controllers that use the Analog Joystick, only controllers that use the DPad/Hatswitch
-4. Controllers that aren't PS3/PS4 controllers don't have a way to get proper mapping :(
+1. Doesn't work with controllers that use the Analog Joystick, only controllers that use the DPad/Hatswitch
+2. Controllers that aren't PS3/PS4 controllers don't have a way to get proper mapping :(
 
 ## Tested with....
 
 1. Hori FC4
 2. Sony DualShock 4
 3. Hori PS4 VLX
+4. PS360+ in any mode
 
 ## Credits
 
 * @dantarion
+* @WydD
