@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <unordered_map>
 #include <fstream>
+#include <mutex>
 
 // Structure change as documented here https://github.com/mumble-voip/mumble/issues/2019
 typedef struct
@@ -38,6 +39,7 @@ namespace std
 }
 // DI stuff
 LPDIRECTINPUT8 di;
+HWND hWnd;
 BOOL diAvailable = true;
 
 // Serves as cache
@@ -64,6 +66,7 @@ VirtualControllerMapping virtualControllers[2];
 
 // Internal timer to launch the detection of DI devices
 int timer = 0;
+
 /* Wrapper DLL stuff...not important */
 #pragma region Wrapper DLL Stuff
 HINSTANCE mHinst = 0, mHinstDLL = 0;
@@ -78,6 +81,7 @@ BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved ) {
 		for ( int i = 0; i < 12; i++ )
 			mProcs[ i ] = (UINT_PTR)GetProcAddress( mHinstDLL, mImportNames[ i ] );
 	} else if ( fdwReason == DLL_PROCESS_DETACH ) {
+		diAvailable = false;
 		// Releasing resources to avoid crashes
 		for (auto it : joysticks) {
 			if (it.second) {
@@ -89,6 +93,7 @@ BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved ) {
 		if (di) {
 			di->Release();
 		}
+		di = NULL;
 		FreeLibrary( mHinstDLL );
 	}
 	return ( TRUE );
@@ -232,6 +237,11 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context)
 	HRESULT hr;
 	BOOL xinput = false;
 
+	if (instance->wUsagePage != 1 || instance->wUsage != 5) {
+		// Not an actual game controller (see issue #3)
+		return DIENUM_CONTINUE;
+	}
+
 	// First check if the device is known
 	auto it = isXInput.find(instance->guidInstance);
 	if (it == isXInput.end()) {
@@ -260,7 +270,10 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context)
 	// If it failed, then we can't use this joystick. (Maybe the user unplugged
 	// it while we were in the middle of enumerating it.)
 	if (FAILED(hr)) {
-		return DIENUM_CONTINUE;
+		// As seen on x360ce, if create device fails on guid instance, try the product
+		hr = di->CreateDevice(instance->guidProduct, &joystick, NULL);
+		if (FAILED(hr))
+			return DIENUM_CONTINUE;
 	}
 
 	// Set the data format to "simple joystick" - a predefined data format 
@@ -274,6 +287,23 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context)
 		return DIENUM_CONTINUE;
 	}
 
+	hr = joystick->SetCooperativeLevel(hWnd, DISCL_EXCLUSIVE | DISCL_BACKGROUND);
+	if (FAILED(hr))
+	{
+		hr = joystick->SetCooperativeLevel(hWnd, DISCL_NONEXCLUSIVE | DISCL_BACKGROUND);
+		if (FAILED(hr)) {
+			printf("Cooperative is fucked %x\n", hr);
+		}
+	}
+
+	DIPROPDWORD dipdw;
+	dipdw.diph.dwSize = sizeof(DIPROPDWORD);
+	dipdw.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+	dipdw.diph.dwObj = 0;
+	dipdw.diph.dwHow = DIPH_DEVICE;
+	dipdw.dwData = DIPROPAUTOCENTER_ON;
+	joystick->SetProperty(DIPROP_AUTOCENTER, &dipdw.diph);
+
 	// Acquire the device
 	if (FAILED(hr = joystick->Acquire())) {
 		printf("Acquire is fucked %x\n", hr);
@@ -283,13 +313,6 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context)
 
 	// Store the joystick instance accessible via guid
 	joysticks[instance->guidInstance] = joystick;
-
-	// Set the cooperative level to let DInput know how this device should
-	// interact with the system and with other DInput applications.
-	if (FAILED(hr = joystick->SetCooperativeLevel(NULL, DISCL_NONEXCLUSIVE | DISCL_FOREGROUND))) {
-		printf("Coop is fucked %x\n", hr);
-		// Not that important actually
-	}
 
 	// Get other devices
 	return DIENUM_CONTINUE;
@@ -313,6 +336,14 @@ poll(LPDIRECTINPUTDEVICE8 joystick, LPDIJOYSTATE2 js)
 	return hr;
 }
 
+inline HMODULE& CurrentModule()
+{
+	static HMODULE hModule = 0;
+	if (!hModule)
+		GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCTSTR)&hModule, &hModule);
+	return hModule;
+}
+
 int setupDInput()
 {
 	if (!diAvailable) {
@@ -320,11 +351,29 @@ int setupDInput()
 	}
 	// Create a DirectInput8 instance
 	if (di == NULL) {
-		if (FAILED(DirectInput8Create(GetModuleHandle(NULL), DIRECTINPUT_VERSION,
-			IID_IDirectInput8, (VOID**)&di, NULL))) {
+		HRESULT hr = DirectInput8Create(GetModuleHandle(NULL), DIRECTINPUT_VERSION,
+			IID_IDirectInput8, (VOID**)&di, NULL);
+		if (FAILED(hr)) {
 			// If it is not available for any reason, avoid getting back in setupDInput
 			diAvailable = false;
-			return (FALSE);
+			MessageBox(NULL, "DirectInput cannot be initialized", "SF5DInput - Error", MB_ICONERROR);
+			exit(hr);
+		}
+		hWnd = CreateWindowExA(0L,
+			"Message",	// name of window class
+			"SF5DInput",		// title-bar std::string
+			WS_TILED,			// normal window
+			CW_USEDEFAULT,		// default horizontal position
+			CW_USEDEFAULT,		// default vertical position
+			CW_USEDEFAULT,		// default width
+			CW_USEDEFAULT,		// default height
+			HWND_MESSAGE,		// message-only window
+			NULL,				// no class menu
+			CurrentModule(),	// handle to application instance
+			NULL);				// no window-creation data
+		if (!hWnd) {
+			MessageBox(NULL, "Cannot create internal window", "SF5DInput - Error", MB_ICONERROR);
+			exit(2);
 		}
 	}
 
@@ -409,20 +458,15 @@ void selectController(int desired, const GUID* dinputGUID, short xinputIndex, BO
 	targetMapping->xinput = xinputIndex;
 	targetMapping->free = false;
 }
-// Returns an empty device instead of ERROR_DEVICE_NOT_CONNECTED
-// This asks SFV to always poll device 0 and 1
-DWORD emptyDevice(XINPUT_STATE* pState) {
-	ZeroMemory(pState, sizeof(XINPUT_STATE));
-	return ERROR_SUCCESS;
-}
 
 // XInputGetState implementation
 DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 {
 	// We dont support >= 2
-	if (dwUserIndex >= 2) {
+	if (dwUserIndex >= 2 || !diAvailable) {
 		return ERROR_DEVICE_NOT_CONNECTED;
 	}
+	ZeroMemory(pState, sizeof(XINPUT_STATE));
 
 	// Make the reads on 0 then dispatch on the rest
 	if (dwUserIndex == 0) {
@@ -478,7 +522,7 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 	
 	if (mapping->free) {
 		// No device for this one, give the empty device
-		return emptyDevice(pState);
+		return ERROR_SUCCESS;
 	}
 
 	// We have something
@@ -488,7 +532,7 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 		if (!xinputReady[mapping->xinput]) {
 			// But it was disconnected...
 			mapping->free = true;
-			return emptyDevice(pState);
+			return ERROR_SUCCESS;
 		}
 		// Else, just copy the input to the pState
 		memcpy(pState, &xinputStates[mapping->xinput], sizeof(XINPUT_STATE));
@@ -500,7 +544,7 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 	if (joysticks.find(mapping->guid) == joysticks.end()) {
 		// But it has been destroy
 		mapping->free = true;
-		return emptyDevice(pState);
+		return ERROR_SUCCESS;
 	}
 
 	// Do the actual mapping now
@@ -541,6 +585,10 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 	if (js->rgdwPOV[0] == 5 * 4500 || js->rgdwPOV[0] == 6 * 4500 || js->rgdwPOV[0] == 7 * 4500)
 		pState->Gamepad.wButtons |= XINPUT_GAMEPAD_DPAD_LEFT;
 	//TODO ANALOG JOYSTICK
+
+	// As seen on x360ce
+	// prevent sleep
+	SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
 
 	//Controller is connected!
 	return ERROR_SUCCESS;
