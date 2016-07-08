@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include "XInput.h"
+#define DIRECTINPUT_VERSION 0x0800
 #pragma comment(lib, "XInput.lib")
 #include <dinput.h>
 #pragma comment(lib, "dinput8.lib")
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <unordered_map>
 #include <fstream>
+#include <dbt.h>
 
 // Structure change as documented here https://github.com/mumble-voip/mumble/issues/2019
 typedef struct
@@ -38,7 +40,10 @@ namespace std
 }
 // DI stuff
 LPDIRECTINPUT8 di;
+HWND hWnd;
+HDEVNOTIFY hDeviceNotify;
 BOOL diAvailable = true;
+short mustRefreshDevices = -1;
 
 // Serves as cache
 std::unordered_map<GUID, BOOL> isXInput;
@@ -62,8 +67,6 @@ struct VirtualControllerMapping
 // The mapping table
 VirtualControllerMapping virtualControllers[2];
 
-// Internal timer to launch the detection of DI devices
-int timer = 0;
 /* Wrapper DLL stuff...not important */
 #pragma region Wrapper DLL Stuff
 HINSTANCE mHinst = 0, mHinstDLL = 0;
@@ -78,17 +81,6 @@ BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved ) {
 		for ( int i = 0; i < 12; i++ )
 			mProcs[ i ] = (UINT_PTR)GetProcAddress( mHinstDLL, mImportNames[ i ] );
 	} else if ( fdwReason == DLL_PROCESS_DETACH ) {
-		// Releasing resources to avoid crashes
-		for (auto it : joysticks) {
-			if (it.second) {
-				it.second->Unacquire();
-				it.second->Release();
-			}
-		}
-		joysticks.clear();
-		if (di) {
-			di->Release();
-		}
 		FreeLibrary( mHinstDLL );
 	}
 	return ( TRUE );
@@ -114,6 +106,7 @@ extern "C" void ExportByOrdinal103();
 #define SAFE_DELETE(a) if( (a) != NULL ) delete (a); (a) = NULL;
 /*
 The following code checks if a device is an XInput device. We don't need to let these devices be visible through DirectInput, because they already work.
+And you have to understand that this is dirty BUT it is courtesy of MSDN
 */
 //-----------------------------------------------------------------------------
 // Enum each PNP device using WMI and check each device ID to see if it contains 
@@ -189,10 +182,10 @@ BOOL isXInputDevice(const GUID* pGuidProductFromDirectInput)
 					// If it does, then get the VID/PID from var.bstrVal
 					DWORD dwPid = 0, dwVid = 0;
 					WCHAR* strVid = wcsstr(var.bstrVal, L"VID_");
-					if (strVid && swscanf(strVid, L"VID_%4X", &dwVid) != 1)
+					if (strVid && swscanf_s(strVid, L"VID_%4X", &dwVid) != 1)
 						dwVid = 0;
 					WCHAR* strPid = wcsstr(var.bstrVal, L"PID_");
-					if (strPid && swscanf(strPid, L"PID_%4X", &dwPid) != 1)
+					if (strPid && swscanf_s(strPid, L"PID_%4X", &dwPid) != 1)
 						dwPid = 0;
 
 					// Compare the VID/PID to the DInput device
@@ -227,10 +220,14 @@ LCleanup:
 	return bIsXinputDevice;
 }
 
-BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context)
-{
+BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 	HRESULT hr;
 	BOOL xinput = false;
+
+	if (instance->wUsagePage != 1 || instance->wUsage != 5) {
+		// Not an actual game controller (see issue #3)
+		return DIENUM_CONTINUE;
+	}
 
 	// First check if the device is known
 	auto it = isXInput.find(instance->guidInstance);
@@ -260,7 +257,10 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context)
 	// If it failed, then we can't use this joystick. (Maybe the user unplugged
 	// it while we were in the middle of enumerating it.)
 	if (FAILED(hr)) {
-		return DIENUM_CONTINUE;
+		// As seen on x360ce, if create device fails on guid instance, try the product
+		hr = di->CreateDevice(instance->guidProduct, &joystick, NULL);
+		if (FAILED(hr))
+			return DIENUM_CONTINUE;
 	}
 
 	// Set the data format to "simple joystick" - a predefined data format 
@@ -274,6 +274,22 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context)
 		return DIENUM_CONTINUE;
 	}
 
+	hr = joystick->SetCooperativeLevel(hWnd, DISCL_EXCLUSIVE | DISCL_BACKGROUND);
+	if (FAILED(hr)) {
+		hr = joystick->SetCooperativeLevel(hWnd, DISCL_NONEXCLUSIVE | DISCL_BACKGROUND);
+		if (FAILED(hr)) {
+			printf("Cooperative is fucked %x\n", hr);
+		}
+	}
+
+	DIPROPDWORD dipdw;
+	dipdw.diph.dwSize = sizeof(DIPROPDWORD);
+	dipdw.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+	dipdw.diph.dwObj = 0;
+	dipdw.diph.dwHow = DIPH_DEVICE;
+	dipdw.dwData = DIPROPAUTOCENTER_ON;
+	joystick->SetProperty(DIPROP_AUTOCENTER, &dipdw.diph);
+
 	// Acquire the device
 	if (FAILED(hr = joystick->Acquire())) {
 		printf("Acquire is fucked %x\n", hr);
@@ -284,19 +300,10 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context)
 	// Store the joystick instance accessible via guid
 	joysticks[instance->guidInstance] = joystick;
 
-	// Set the cooperative level to let DInput know how this device should
-	// interact with the system and with other DInput applications.
-	if (FAILED(hr = joystick->SetCooperativeLevel(NULL, DISCL_NONEXCLUSIVE | DISCL_FOREGROUND))) {
-		printf("Coop is fucked %x\n", hr);
-		// Not that important actually
-	}
-
 	// Get other devices
 	return DIENUM_CONTINUE;
 }
-HRESULT
-poll(LPDIRECTINPUTDEVICE8 joystick, LPDIJOYSTATE2 js)
-{
+HRESULT poll(LPDIRECTINPUTDEVICE8 joystick, LPDIJOYSTATE2 js) {
 	// Device polling (as seen on x360ce)
 	HRESULT hr = E_FAIL;
 
@@ -313,26 +320,128 @@ poll(LPDIRECTINPUTDEVICE8 joystick, LPDIJOYSTATE2 js)
 	return hr;
 }
 
+void refreshDevices() {
+	if (!diAvailable || di == NULL) {
+		return;
+	}
+	// Poll all devices
+	di->EnumDevices(DI8DEVCLASS_GAMECTRL, enumCallback, NULL, DIEDFL_ATTACHEDONLY);
+}
+INT_PTR WINAPI messageCallback(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+	switch (message) {
+		case WM_DEVICECHANGE:
+			if (wParam ==  DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {
+				// Wait for 30 frames, send refresh
+				mustRefreshDevices = 30;
+			}
+			break;
+
+		case WM_CLOSE:
+			UnregisterDeviceNotification(hDeviceNotify);
+			DestroyWindow(hWnd);
+
+			diAvailable = false;
+			// Releasing resources to avoid crashes
+			for (auto it : joysticks) {
+				if (it.second) {
+					it.second->Unacquire();
+					it.second->Release();
+				}
+			}
+			joysticks.clear();
+			if (di) {
+				di->Release();
+			}
+			di = NULL;
+			break;
+
+		default:
+			// Send all other messages on to the default windows handler.
+			return DefWindowProc(hWnd, message, wParam, lParam);
+	}
+	return 1;
+}
+
+// Taken from here http://stackoverflow.com/questions/1387064/how-to-get-the-error-message-from-the-error-code-returned-by-getlasterror
+// Returns the last Win32 error, in string format. Returns an empty string if there is no error.
+std::string GetLastErrorAsString()
+{
+	//Get the error message, if any.
+	DWORD errorMessageID = ::GetLastError();
+	if (errorMessageID == 0)
+		return std::string(); //No error message has been recorded
+
+	LPSTR messageBuffer = nullptr;
+	size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
+
+	std::string message(messageBuffer, size);
+
+	//Free the buffer.
+	LocalFree(messageBuffer);
+
+	return message;
+}
 int setupDInput()
 {
 	if (!diAvailable) {
 		return FALSE;
 	}
 	// Create a DirectInput8 instance
-	if (di == NULL) {
-		if (FAILED(DirectInput8Create(GetModuleHandle(NULL), DIRECTINPUT_VERSION,
-			IID_IDirectInput8, (VOID**)&di, NULL))) {
-			// If it is not available for any reason, avoid getting back in setupDInput
-			diAvailable = false;
-			return (FALSE);
-		}
+	if (di != NULL) {
+		return TRUE;
+	}
+	HRESULT hr = DirectInput8Create(GetModuleHandle(NULL), DIRECTINPUT_VERSION, IID_IDirectInput8, (VOID**)&di, NULL);
+	if (FAILED(hr)) {
+		// If it is not available for any reason, avoid getting back in setupDInput
+		diAvailable = false;
+		MessageBox(NULL, GetLastErrorAsString().c_str(), "SF5DInput - Direct Input", MB_ICONERROR);
+		exit(hr);
 	}
 
-	// Poll all devices
-	if (FAILED(di->EnumDevices(DI8DEVCLASS_GAMECTRL, enumCallback,
-		NULL, DIEDFL_ATTACHEDONLY))) {
-		return FALSE;
+	// DI is ready, now create a message-only window
+	WNDCLASSEX wndClass = {};
+	wndClass.cbSize = sizeof(WNDCLASSEX);
+	wndClass.lpfnWndProc = reinterpret_cast<WNDPROC>(messageCallback);
+	GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCTSTR)&wndClass.hInstance, &wndClass.hInstance);
+	wndClass.lpszClassName = "SF5DInput";
+
+	if (!RegisterClassEx(&wndClass)) {
+		MessageBox(NULL, GetLastErrorAsString().c_str(), "SF5DInput - Registering Window Class", MB_ICONERROR);
+		exit(1);
 	}
+
+	hWnd = CreateWindowEx(0L, wndClass.lpszClassName, "SF5DInput", 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, NULL);	
+	if (!hWnd) {
+		MessageBox(NULL, GetLastErrorAsString().c_str(), "SF5DInput - Create Internal Window", MB_ICONERROR);
+		exit(2);
+	}
+
+	// Message only window is ready, now we can create a notification filter to register to device notificaitons
+
+	DEV_BROADCAST_DEVICEINTERFACE NotificationFilter;
+
+	ZeroMemory(&NotificationFilter, sizeof(NotificationFilter));
+	NotificationFilter.dbcc_size = sizeof(DEV_BROADCAST_DEVICEINTERFACE);
+	NotificationFilter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+	// This is GUID_DEVINTERFACE_USB_DEVICE, it scans all usb devices
+	NotificationFilter.dbcc_classguid = { 0xA5DCBF10L, 0x6530, 0x11D2, { 0x90, 0x1F, 0x00, 0xC0, 0x4F, 0xB9, 0x51, 0xED } };
+
+	hDeviceNotify = RegisterDeviceNotification(
+		hWnd,                       // events recipient
+		&NotificationFilter,        // type of device
+		DEVICE_NOTIFY_WINDOW_HANDLE // type of recipient handle
+	);
+
+	if (NULL == hDeviceNotify) {
+		MessageBox(NULL, GetLastErrorAsString().c_str(), "SF5DInput - Registering Device Notification", MB_ICONERROR);
+		exit(1);
+	}
+
+	// WOOH we are ready to go!
+
+	// Get all the devices
+	refreshDevices();
 	return TRUE;
 }
 
@@ -409,31 +518,29 @@ void selectController(int desired, const GUID* dinputGUID, short xinputIndex, BO
 	targetMapping->xinput = xinputIndex;
 	targetMapping->free = false;
 }
-// Returns an empty device instead of ERROR_DEVICE_NOT_CONNECTED
-// This asks SFV to always poll device 0 and 1
-DWORD emptyDevice(XINPUT_STATE* pState) {
-	ZeroMemory(pState, sizeof(XINPUT_STATE));
-	return ERROR_SUCCESS;
-}
 
 // XInputGetState implementation
 DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 {
 	// We dont support >= 2
-	if (dwUserIndex >= 2) {
+	if (dwUserIndex >= 2 || !diAvailable) {
 		return ERROR_DEVICE_NOT_CONNECTED;
 	}
+	// First init
+	if (di == NULL) {
+		setupDInput();
+	}
+	ZeroMemory(pState, sizeof(XINPUT_STATE));
 
 	// Make the reads on 0 then dispatch on the rest
 	if (dwUserIndex == 0) {
-		// Once every second
-		if (timer % 60 == 0) {
-			// Refresh device list
-			setupDInput();
-			timer = 0;
+		// Check if we have to refresh the list of devices
+		// basically if < 0 dont do anything, if > 0 reduce by 1, if == 0 refresh, this sets a simple timer
+		if (mustRefreshDevices >= 0) {
+			if (--mustRefreshDevices == 0) {
+				refreshDevices();
+			}
 		}
-		++timer;
-
 		// Read DI joysticks
 		for (auto it = joysticks.begin(); it != joysticks.end(); ) {
 			BOOL isNew = joystickStates.find(it->first) == joystickStates.end();
@@ -478,7 +585,7 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 	
 	if (mapping->free) {
 		// No device for this one, give the empty device
-		return emptyDevice(pState);
+		return ERROR_SUCCESS;
 	}
 
 	// We have something
@@ -488,7 +595,7 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 		if (!xinputReady[mapping->xinput]) {
 			// But it was disconnected...
 			mapping->free = true;
-			return emptyDevice(pState);
+			return ERROR_SUCCESS;
 		}
 		// Else, just copy the input to the pState
 		memcpy(pState, &xinputStates[mapping->xinput], sizeof(XINPUT_STATE));
@@ -500,7 +607,7 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 	if (joysticks.find(mapping->guid) == joysticks.end()) {
 		// But it has been destroy
 		mapping->free = true;
-		return emptyDevice(pState);
+		return ERROR_SUCCESS;
 	}
 
 	// Do the actual mapping now
@@ -541,6 +648,10 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 	if (js->rgdwPOV[0] == 5 * 4500 || js->rgdwPOV[0] == 6 * 4500 || js->rgdwPOV[0] == 7 * 4500)
 		pState->Gamepad.wButtons |= XINPUT_GAMEPAD_DPAD_LEFT;
 	//TODO ANALOG JOYSTICK
+
+	// As seen on x360ce
+	// prevent sleep
+	SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
 
 	//Controller is connected!
 	return ERROR_SUCCESS;
