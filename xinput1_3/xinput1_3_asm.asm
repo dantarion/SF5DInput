@@ -1,3 +1,4 @@
+.model flat
 .code
 extern mProcs:QWORD
 DllMain_wrapper proc
