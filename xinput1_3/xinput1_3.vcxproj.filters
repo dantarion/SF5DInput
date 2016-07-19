@@ -18,6 +18,12 @@
     <ClCompile Include="xinput1_3.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="wrapped.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="utils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="xinput1_3.def">
@@ -25,8 +31,11 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <MASM Include="xinput1_3_asm.asm">
+    <ClInclude Include="wrapped.h">
       <Filter>Source Files</Filter>
-    </MASM>
+    </ClInclude>
+    <ClInclude Include="utils.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

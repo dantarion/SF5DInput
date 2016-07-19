@@ -148,13 +148,16 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="utils.cpp" />
+    <ClCompile Include="wrapped.cpp" />
     <ClCompile Include="xinput1_3.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="xinput1_3.def" />
-    <MASM Include="xinput1_3_asm.asm">
-      <FileType>Document</FileType>
-    </MASM>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="utils.h" />
+    <ClInclude Include="wrapped.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
