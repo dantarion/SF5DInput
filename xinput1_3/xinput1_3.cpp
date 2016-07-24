@@ -45,6 +45,10 @@ struct VirtualControllerMapping
 // The mapping table
 VirtualControllerMapping virtualControllers[2];
 
+#define CONTROLLER_CHANGE_TIMER 120 // counted in frames
+std::unordered_map<GUID, int> dinputControllerChangeTimer;
+int xinputControllerChangeTimer[4] = { -1, -1, -1, -1 };
+
 BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 	HRESULT hr;
 	BOOL xinput = false;
@@ -157,6 +161,7 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 
 	// Store the joystick instance accessible via guid
 	joysticks[instance->guidInstance] = joystick;
+	dinputControllerChangeTimer[instance->guidInstance] = -1;
 	removedDevices->erase(instance->guidInstance);
 
 	// Get other devices
@@ -182,6 +187,7 @@ void refreshDevices() {
 		device->Release();
 		joystickStates.erase(guid);
 		joysticks.erase(guid);
+		dinputControllerChangeTimer[guid] = -1;
 	}
 }
 
@@ -283,30 +289,59 @@ int setupDInput()
 
 // From a DI state, check if we want a controller change
 // Returns -1 if nothing must change, or the id of the controller
-int readDirectInputControllerChange(DIJOYSTATE2* input) {
+int readDirectInputControllerChange(const GUID* guid, DIJOYSTATE2* input) {
 	// Home is selected (or SELECT + START)
 	BOOL homeSelected = (input->rgbButtons[8] && input->rgbButtons[9]) || input->rgbButtons[12];
-	//If DirectInput HOME + LPAD RIGHT
-	if ((input->rgdwPOV[0] == 5 * 4500 || input->rgdwPOV[0] == 6 * 4500 || input->rgdwPOV[0] == 7 * 4500) && homeSelected)
-		return 0;
-	//If DirectInput HOME + DPAD RIGHT
-	if ((input->rgdwPOV[0] == 1 * 4500 || input->rgdwPOV[0] == 2 * 4500 || input->rgdwPOV[0] == 3 * 4500) && homeSelected)
-		return 1;
+
+	int result;
+	if ((input->rgdwPOV[0] == 5 * 4500 || input->rgdwPOV[0] == 6 * 4500 || input->rgdwPOV[0] == 7 * 4500) && homeSelected) {
+		//If DirectInput HOME + LPAD RIGHT
+		result = 0;
+	} else if ((input->rgdwPOV[0] == 1 * 4500 || input->rgdwPOV[0] == 2 * 4500 || input->rgdwPOV[0] == 3 * 4500) && homeSelected) {
+		//If DirectInput HOME + DPAD RIGHT
+		result = 1;
+	}
+	else {
+		dinputControllerChangeTimer[*guid] = -1;
+		return -1;
+	}
+
+	if (dinputControllerChangeTimer[*guid] < 0) {
+		// Wait two seconds
+		dinputControllerChangeTimer[*guid] = CONTROLLER_CHANGE_TIMER;
+		return -1;
+	}
+	if (dinputControllerChangeTimer[*guid]-- == 0) {
+		return result;
+	}
 	return -1;
 }
 
 // From an XINPUT state, check if we want a controller change
 // Returns -1 if nothing must change, or the id of the controller
-int readXInputControllerChange(XINPUT_STATE_EX* input) {
+int readXInputControllerChange(short idx, XINPUT_STATE_EX* input) {
 	// Select guide (or SELECT + START)
 	BOOL guideSelected = (input->Gamepad.wButtons & 0x400) || ((input->Gamepad.wButtons & XINPUT_GAMEPAD_START) && (input->Gamepad.wButtons & XINPUT_GAMEPAD_BACK));
 	// ... and direction...
+	int result;
 	if (guideSelected && (input->Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT)) {
-		return 0;
+		result = 0;
+	} else if (guideSelected && (input->Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT)) {
+	 	result = 1;
+	} else {
+		xinputControllerChangeTimer[idx] = -1;
+		return -1;
 	}
-	if (guideSelected && (input->Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT)) {
-		return 1;
+
+	if (xinputControllerChangeTimer[idx] < 0) {
+		// Wait two seconds
+		xinputControllerChangeTimer[idx] = CONTROLLER_CHANGE_TIMER;
+		return -1;
 	}
+	if (xinputControllerChangeTimer[idx]-- == 0) {
+		return result;
+	}
+
 	return -1;
 }
 
@@ -392,7 +427,11 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 			}
 
 			// Check if the device wants to be changed
-			int desired = readDirectInputControllerChange(state);
+#ifndef DISABLE_CONTROLLER_CHANGE
+			int desired = readDirectInputControllerChange(&it->first, state);
+#else
+			int desired = -1;
+#endif
 			// Set the virtual controller if necessary
 			selectController(desired, &it->first, -1, isNew);
 			++it;
@@ -403,12 +442,17 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 			// Read XInputGetStateEx to get the GUIDE button (though it seems to be broken on win10 now)
 			if (XInputGetStateEx_wrapped(i, &xinputStates[i]) != ERROR_SUCCESS) {
 				xinputReady[i] = false;
+				xinputControllerChangeTimer[i] = -1;
 				continue;
 			}
 			BOOL isNew = !xinputReady[i];
 			xinputReady[i] = true;
 			// Check if the device wants to be changed
-			int desired = readXInputControllerChange(&xinputStates[i]);
+#ifndef DISABLE_CONTROLLER_CHANGE
+			int desired = readXInputControllerChange(i, &xinputStates[i]);
+#else
+			int desired = -1;
+#endif
 			// Set the virtual controller if necessary
 			selectController(desired, NULL, i, isNew);
 		}
