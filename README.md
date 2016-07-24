@@ -5,7 +5,8 @@ This is a drop in DLL replacement for *xinput1_3.dll* that provides DirectInput 
 
 ## How to Use?
 
-Drop all included files into *installdirectory\StreetFighterV\Binaries\Win64\* and launch the game. To uninstall, just remove the dll files from this folder.
+Download the latest version of the dll in the [release section](https://github.com/dantarion/SF5DInput/releases).
+Drop the xinput1_3.dll file into *installdirectory\StreetFighterV\Binaries\Win64\* and launch the game. To uninstall, just remove the dll file from this folder.
 
 ## Features
 
@@ -25,6 +26,7 @@ Drop all included files into *installdirectory\StreetFighterV\Binaries\Win64\* a
 2. Sony DualShock 4
 3. Hori PS4 VLX
 4. PS360+ in any mode
+5. Venom PS4
 
 ## Credits
 
