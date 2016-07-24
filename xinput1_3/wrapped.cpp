@@ -1,7 +1,7 @@
 #include "wrapped.h"
 #include "utils.h"
-#include <mutex>
 
+// Will contain the references to the dll
 DWORD(WINAPI* XInputGetState_origin)(DWORD dwUserIndex, XINPUT_STATE* pState);
 DWORD(WINAPI* XInputSetState_origin)(DWORD dwUserIndex, XINPUT_VIBRATION* pVibration);
 DWORD(WINAPI* XInputGetCapabilities_origin)(DWORD dwUserIndex, DWORD dwFlags, XINPUT_CAPABILITIES* pCapabilities);
@@ -16,35 +16,41 @@ DWORD(WINAPI* XInputWaitForGuideButton_origin)(DWORD dwUserIndex, DWORD dwFlag, 
 DWORD(WINAPI* XInputCancelGuideButtonWait_origin)(DWORD dwUserIndex); // 102
 DWORD(WINAPI* XInputPowerOffController_origin)(DWORD dwUserIndex); // 103
 
+// Simplification of dll calls using template to infer typing
 template<typename T>
 inline void loadDllCall(HINSTANCE mHinstDLL, const char* funcname, T* ppfunc)
 {
 	*ppfunc = reinterpret_cast<T>(::GetProcAddress(mHinstDLL, funcname));
 }
-std::mutex initLock;
 
+// Loading mutex, even though i'm 99% sure we wont need it, this is for safety purposes
+HANDLE initLock = CreateMutex(NULL, FALSE, NULL);
 BOOL initialized = FALSE;
 void init() {
 	if (initialized) {
 		return;
 	}
 	// Make sure that we only load this once
-	initLock.lock();
+	WaitForSingleObject(initLock, INFINITE);
+	// Standard post-lock recheck
 	if (initialized) {
-		initLock.unlock();
+		ReleaseMutex(initLock);
 		return;
 	}
+	// Load the original xinput1_3 by checking out the SystemDirectory
 	TCHAR systemPath[MAX_PATH];
 	GetSystemDirectory(systemPath, sizeof(systemPath));
-	strcat_s(systemPath, "\\xinput1_3.dll");
-	HINSTANCE mHinstDLL = LoadLibrary(systemPath);
+	std::string libpath = std::string(systemPath) + "\\xinput1_3.dll";
+	HINSTANCE mHinstDLL = LoadLibrary(libpath.c_str());
 	if (!mHinstDLL) {
+		// CANT LOAD XINPUT!
 		initialized = true;
-		initLock.unlock();
+		ReleaseMutex(initLock);
 		MessageBox(NULL, GetLastErrorAsString().c_str(), "SF5DInput - Loading DLL", MB_ICONERROR);
 		// Cannot load dll just quit
 		exit(1);
 	}
+	// And now we bind every function
 	loadDllCall(mHinstDLL, "XInputEnable", &XInputEnable_origin);
 	loadDllCall(mHinstDLL, "XInputGetState", &XInputGetState_origin);
 	loadDllCall(mHinstDLL, "XInputSetState", &XInputSetState_origin);
@@ -60,7 +66,8 @@ void init() {
 	loadDllCall(mHinstDLL, (const char*)103, &XInputPowerOffController_origin);
 
 	initialized = true;
-	initLock.unlock();
+	// Done
+	ReleaseMutex(initLock);
 }
 
 DWORD WINAPI XInputGetState_wrapped(DWORD dwUserIndex, XINPUT_STATE* pState) {

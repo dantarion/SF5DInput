@@ -1,5 +1,5 @@
 #include "utils.h"
-#include <windows.h>
+#include "stdafx.h"
 
 // Taken from here http://stackoverflow.com/questions/1387064/how-to-get-the-error-message-from-the-error-code-returned-by-getlasterror
 // Returns the last Win32 error, in string format. Returns an empty string if there is no error.

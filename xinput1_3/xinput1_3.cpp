@@ -1,14 +1,5 @@
-#include <windows.h>
+#include "stdafx.h"
 #include "wrapped.h"
-#include "utils.h"
-
-#define DIRECTINPUT_VERSION 0x0800
-#include <dinput.h>
-#pragma comment(lib, "dinput8.lib")
-#pragma comment(lib, "dxguid.lib")
-
-#include <unordered_map>
-#include <dbt.h>
 
 // Hashing structure for GUID
 namespace std
@@ -32,6 +23,16 @@ std::unordered_map<GUID, DIJOYSTATE2> joystickStates;
 // All XInput states and wether it is plugged in or not
 XINPUT_STATE_EX xinputStates[4];
 bool xinputReady[4];
+
+static const GUID knownXInputGUID[] = {
+	/* Valve streaming pad */
+	{ MAKELONG(0x28DE, 0x11FF), 0x0000, 0x0000,{ 0x00, 0x00, 0x50, 0x49, 0x44, 0x56, 0x49, 0x44 } },
+	/* Wired X360 */
+	{ MAKELONG(0x045E, 0x02A1), 0x0000, 0x0000,{ 0x00, 0x00, 0x50, 0x49, 0x44, 0x56, 0x49, 0x44 } },
+	/* Wireless X360 */
+	{ MAKELONG(0x045E, 0x028E), 0x0000, 0x0000,{ 0x00, 0x00, 0x50, 0x49, 0x44, 0x56, 0x49, 0x44 } }
+};
+static const int sizeof_knownXInputGUID = sizeof(knownXInputGUID) / sizeof(GUID);
 
 // Defines which device is connected to which port
 struct VirtualControllerMapping
@@ -80,20 +81,33 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 	auto it = isXInput.find(instance->guidInstance);
 	if (it == isXInput.end()) {
 		// Not found yet, so check if it is an XInputDevice
-		DIPROPGUIDANDPATH  dipdw;  
-		dipdw.diph.dwSize = sizeof(DIPROPGUIDANDPATH);
-		dipdw.diph.dwHeaderSize = sizeof(DIPROPHEADER);
-		dipdw.diph.dwObj = 0; 
-		dipdw.diph.dwHow = DIPH_DEVICE;
-		hr = joystick->GetProperty(DIPROP_GUIDANDPATH, &dipdw.diph);
-		if (FAILED(hr)) {
-			printf("Cannot fetch GUID & PATH %x\n", hr);
-			joystick->Release();
-			return DIENUM_CONTINUE;
-		}
-		std::wstring asStr(dipdw.wszPath);
-		xinput = asStr.find(L"ig_") != std::string::npos;
 
+		// First check if this is a known xinput GUID (because the ig_ detection is not 100% with shield for instance)
+		for (int i = 0; i < sizeof_knownXInputGUID; ++i) {
+			if (memcmp(&instance->guidProduct, &knownXInputGUID[i], sizeof(GUID)) == 0) {
+				xinput = TRUE;
+				break;
+			}
+		}
+
+		if (!xinput) {
+			// We have not found it using the standard ways, check if it checks out with ig_
+			DIPROPGUIDANDPATH  dipdw;
+			dipdw.diph.dwSize = sizeof(DIPROPGUIDANDPATH);
+			dipdw.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+			dipdw.diph.dwObj = 0;
+			dipdw.diph.dwHow = DIPH_DEVICE;
+			// Compared to what is given by microsoft, this does the same thing without the ugly registry for loop
+			hr = joystick->GetProperty(DIPROP_GUIDANDPATH, &dipdw.diph);
+			if (FAILED(hr)) {
+				printf("Cannot fetch GUID & PATH %x\n", hr);
+				joystick->Release();
+				return DIENUM_CONTINUE;
+			}
+			std::wstring wsz(dipdw.wszPath);
+			// even though this does not look safe, this is the official way of detecting
+			xinput = wsz.find(L"ig_") != std::string::npos;
+		}
 		isXInput[instance->guidInstance] = xinput;
 	} else {
 		xinput = it->second;
@@ -169,7 +183,8 @@ void refreshDevices() {
 	// Poll all devices
 	di->EnumDevices(DI8DEVCLASS_GAMECTRL, enumCallback, NULL, DIEDFL_ATTACHEDONLY);
 }
-INT_PTR WINAPI messageCallback(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+
+INT_PTR WINAPI messageCallback(HWND hw, UINT message, WPARAM wParam, LPARAM lParam) {
 	switch (message) {
 		case WM_DEVICECHANGE:
 			if (wParam ==  DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {
@@ -178,28 +193,9 @@ INT_PTR WINAPI messageCallback(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
 			}
 			break;
 
-		case WM_CLOSE:
-			UnregisterDeviceNotification(hDeviceNotify);
-			DestroyWindow(hWnd);
-
-			diAvailable = false;
-			// Releasing resources to avoid crashes
-			for (auto it : joysticks) {
-				if (it.second) {
-					it.second->Unacquire();
-					it.second->Release();
-				}
-			}
-			joysticks.clear();
-			if (di) {
-				di->Release();
-			}
-			di = NULL;
-			break;
-
 		default:
 			// Send all other messages on to the default windows handler.
-			return DefWindowProc(hWnd, message, wParam, lParam);
+			return DefWindowProc(hw, message, wParam, lParam);
 	}
 	return 1;
 }
@@ -387,7 +383,7 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 		}
 
 		// Read XInput
-		for (int i = 0; i < 4; i++) {
+		for (short i = 0; i < 4; i++) {
 			// Read XInputGetStateEx to get the GUIDE button (though it seems to be broken on win10 now)
 			if (XInputGetStateEx_wrapped(i, &xinputStates[i]) != ERROR_SUCCESS) {
 				xinputReady[i] = false;

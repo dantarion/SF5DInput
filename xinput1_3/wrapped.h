@@ -1,7 +1,16 @@
 #pragma once
-#include <windows.h>
-#include "XInput.h"
-#pragma comment(lib, "XInput.lib")
+#include "stdafx.h"
+
+// Contains the original XInput DLL calls
+// This is lazy loaded to avoid any loading conflict
+
+DWORD WINAPI XInputGetState_wrapped(DWORD dwUserIndex, XINPUT_STATE* pState);
+DWORD WINAPI XInputSetState_wrapped(DWORD dwUserIndex, XINPUT_VIBRATION* pVibration);
+DWORD WINAPI XInputGetCapabilities_wrapped(DWORD dwUserIndex, DWORD dwFlags, XINPUT_CAPABILITIES* pCapabilities);
+VOID WINAPI XInputEnable_wrapped(BOOL enable);
+DWORD WINAPI XInputGetDSoundAudioDeviceGuids_wrapped(DWORD dwUserIndex, GUID* pDSoundRenderGuid, GUID* pDSoundCaptureGuid);
+DWORD WINAPI XInputGetBatteryInformation_wrapped(DWORD  dwUserIndex, BYTE devType, XINPUT_BATTERY_INFORMATION* pBatteryInformation);
+DWORD WINAPI XInputGetKeystroke_wrapped(DWORD dwUserIndex, DWORD dwReserved, PXINPUT_KEYSTROKE pKeystroke);
 
 // Structure change as documented here https://github.com/mumble-voip/mumble/issues/2019
 typedef struct
@@ -21,15 +30,6 @@ typedef struct
 	DWORD dwPacketNumber;
 	XINPUT_GAMEPAD_EX Gamepad;
 } XINPUT_STATE_EX;
-
-
-DWORD WINAPI XInputGetState_wrapped(DWORD dwUserIndex, XINPUT_STATE* pState);
-DWORD WINAPI XInputSetState_wrapped(DWORD dwUserIndex, XINPUT_VIBRATION* pVibration);
-DWORD WINAPI XInputGetCapabilities_wrapped(DWORD dwUserIndex, DWORD dwFlags, XINPUT_CAPABILITIES* pCapabilities);
-VOID WINAPI XInputEnable_wrapped(BOOL enable);
-DWORD WINAPI XInputGetDSoundAudioDeviceGuids_wrapped(DWORD dwUserIndex, GUID* pDSoundRenderGuid, GUID* pDSoundCaptureGuid);
-DWORD WINAPI XInputGetBatteryInformation_wrapped(DWORD  dwUserIndex, BYTE devType, XINPUT_BATTERY_INFORMATION* pBatteryInformation);
-DWORD WINAPI XInputGetKeystroke_wrapped(DWORD dwUserIndex, DWORD dwReserved, PXINPUT_KEYSTROKE pKeystroke);
 
 // XInput 1.3 undocumented functions
 DWORD WINAPI XInputGetStateEx_wrapped(DWORD dwUserIndex, XINPUT_STATE_EX *pState); // 100
