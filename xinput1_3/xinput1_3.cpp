@@ -57,9 +57,11 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 		// Not an actual game controller (see issue #3)
 		return DIENUM_CONTINUE;
 	}
+	std::unordered_set<GUID>* removedDevices = (std::unordered_set<GUID>*)context;
 
 	// Check if we have a live DI instance of this joystick
 	if (joysticks.find(instance->guidInstance) != joysticks.end()) {
+		removedDevices->erase(instance->guidInstance);
 		return DIENUM_CONTINUE;
 	}
 
@@ -155,10 +157,34 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 
 	// Store the joystick instance accessible via guid
 	joysticks[instance->guidInstance] = joystick;
+	removedDevices->erase(instance->guidInstance);
 
 	// Get other devices
 	return DIENUM_CONTINUE;
 }
+
+void refreshDevices() {
+	if (!diAvailable || di == NULL) {
+		return;
+	}
+
+	std::unordered_set<GUID> removedDevices;
+	for (auto kv : joysticks) {
+		removedDevices.insert(kv.first);
+	}
+	// Poll all devices
+	di->EnumDevices(DI8DEVCLASS_GAMECTRL, enumCallback, &removedDevices, DIEDFL_ATTACHEDONLY);
+
+	// Remove all unknown devices
+	for (auto guid : removedDevices) {
+		LPDIRECTINPUTDEVICE8 device = joysticks.at(guid);
+		device->Unacquire();
+		device->Release();
+		joystickStates.erase(guid);
+		joysticks.erase(guid);
+	}
+}
+
 HRESULT poll(LPDIRECTINPUTDEVICE8 joystick, LPDIJOYSTATE2 js) {
 	// Device polling (as seen on x360ce)
 	HRESULT hr = E_FAIL;
@@ -174,14 +200,6 @@ HRESULT poll(LPDIRECTINPUTDEVICE8 joystick, LPDIJOYSTATE2 js) {
 	}
 
 	return hr;
-}
-
-void refreshDevices() {
-	if (!diAvailable || di == NULL) {
-		return;
-	}
-	// Poll all devices
-	di->EnumDevices(DI8DEVCLASS_GAMECTRL, enumCallback, NULL, DIEDFL_ATTACHEDONLY);
 }
 
 INT_PTR WINAPI messageCallback(HWND hw, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -355,7 +373,7 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 		// Check if we have to refresh the list of devices
 		// basically if < 0 dont do anything, if > 0 reduce by 1, if == 0 refresh, this sets a simple timer
 		if (mustRefreshDevices >= 0) {
-			if (--mustRefreshDevices == 0) {
+			if (mustRefreshDevices-- == 0) {
 				refreshDevices();
 			}
 		}
@@ -366,12 +384,10 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 
 			// Poll the device
 			if (FAILED(poll(it->second, state))) {
-				// We cant poll the device
-				// it must be removed from the list of available joysticks
-				it->second->Unacquire();
-				it->second->Release();
-				joystickStates.erase(it->first);
-				it = joysticks.erase(it);
+				if (mustRefreshDevices < 0) {
+					mustRefreshDevices = 30;
+				}
+				++it;
 				continue;
 			}
 
