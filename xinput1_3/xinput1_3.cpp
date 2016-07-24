@@ -1,37 +1,5 @@
-/*
-@dantarion - Source is a bit messy, but it works! (for me)
-*/
-#include <windows.h>
-#include <stdio.h>
-#include "XInput.h"
-#define DIRECTINPUT_VERSION 0x0800
-#pragma comment(lib, "XInput.lib")
-#include <dinput.h>
-#pragma comment(lib, "dinput8.lib")
-#pragma comment(lib, "dxguid.lib")
-#include <cstdio>
-#include <unordered_map>
-#include <fstream>
-#include <dbt.h>
-
-// Structure change as documented here https://github.com/mumble-voip/mumble/issues/2019
-typedef struct
-{
-	WORD wButtons;
-	BYTE bLeftTrigger;
-	BYTE bRightTrigger;
-	SHORT sThumbLX;
-	SHORT sThumbLY;
-	SHORT sThumbRX;
-	SHORT sThumbRY;
-	DWORD dwPaddingReserved; // Adding padding to avoid crashes when using the ExportByOrdinal100
-} XINPUT_GAMEPAD_EX;
-
-typedef struct
-{
-	DWORD dwPacketNumber;
-	XINPUT_GAMEPAD_EX Gamepad;
-} XINPUT_STATE_EX;
+#include "stdafx.h"
+#include "wrapped.h"
 
 // Hashing structure for GUID
 namespace std
@@ -56,6 +24,16 @@ std::unordered_map<GUID, DIJOYSTATE2> joystickStates;
 XINPUT_STATE_EX xinputStates[4];
 bool xinputReady[4];
 
+static const GUID knownXInputGUID[] = {
+	/* Valve streaming pad */
+	{ MAKELONG(0x28DE, 0x11FF), 0x0000, 0x0000,{ 0x00, 0x00, 0x50, 0x49, 0x44, 0x56, 0x49, 0x44 } },
+	/* Wired X360 */
+	{ MAKELONG(0x045E, 0x02A1), 0x0000, 0x0000,{ 0x00, 0x00, 0x50, 0x49, 0x44, 0x56, 0x49, 0x44 } },
+	/* Wireless X360 */
+	{ MAKELONG(0x045E, 0x028E), 0x0000, 0x0000,{ 0x00, 0x00, 0x50, 0x49, 0x44, 0x56, 0x49, 0x44 } }
+};
+static const int sizeof_knownXInputGUID = sizeof(knownXInputGUID) / sizeof(GUID);
+
 // Defines which device is connected to which port
 struct VirtualControllerMapping
 {
@@ -67,180 +45,16 @@ struct VirtualControllerMapping
 // The mapping table
 VirtualControllerMapping virtualControllers[2];
 
-/* Wrapper DLL stuff...not important */
-#pragma region Wrapper DLL Stuff
-HINSTANCE mHinst = 0, mHinstDLL = 0;
-extern "C" UINT_PTR mProcs[12] = {0};
-LPCSTR mImportNames[] = {"DllMain", "XInputEnable", "XInputGetBatteryInformation", "XInputGetCapabilities", "XInputGetDSoundAudioDeviceGuids", "XInputGetKeystroke", "XInputGetState", "XInputSetState", (LPCSTR)100, (LPCSTR)101, (LPCSTR)102, (LPCSTR)103};
-BOOL WINAPI DllMain( HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved ) {
-	mHinst = hinstDLL;
-	if ( fdwReason == DLL_PROCESS_ATTACH ) {
-		mHinstDLL = LoadLibrary( "ori_xinput1_3.dll" );
-		if ( !mHinstDLL )
-			return ( FALSE );
-		for ( int i = 0; i < 12; i++ )
-			mProcs[ i ] = (UINT_PTR)GetProcAddress( mHinstDLL, mImportNames[ i ] );
-	} else if ( fdwReason == DLL_PROCESS_DETACH ) {
-		FreeLibrary( mHinstDLL );
-	}
-	return ( TRUE );
-}
-extern "C" void DllMain_wrapper();
-extern "C" void XInputEnable_wrapper();
-extern "C" void XInputGetBatteryInformation_wrapper();
-extern "C" void XInputGetCapabilities_wrapper();
-extern "C" void XInputGetDSoundAudioDeviceGuids_wrapper();
-extern "C" void XInputGetKeystroke_wrapper();
-extern "C" void XInputGetState_wrapper();
-extern "C" void XInputSetState_wrapper();
-extern "C" DWORD ExportByOrdinal100(_In_  DWORD dwUserIndex, _Out_ XINPUT_STATE_EX *pState);
-extern "C" void ExportByOrdinal101();
-extern "C" void ExportByOrdinal102();
-extern "C" void ExportByOrdinal103();
-
-#pragma endregion
-/* GetStateWrapper, Super Important */
-#include <wbemidl.h>
-#include <oleauto.h>
-#define SAFE_RELEASE(p) { if ( (p) ) { (p)->Release(); (p) = 0; } }
-#define SAFE_DELETE(a) if( (a) != NULL ) delete (a); (a) = NULL;
-/*
-The following code checks if a device is an XInput device. We don't need to let these devices be visible through DirectInput, because they already work.
-And you have to understand that this is dirty BUT it is courtesy of MSDN
-*/
-//-----------------------------------------------------------------------------
-// Enum each PNP device using WMI and check each device ID to see if it contains 
-// "IG_" (ex. "VID_045E&PID_028E&IG_00").  If it does, then it's an XInput device
-// Unfortunately this information can not be found by just using DirectInput 
-//-----------------------------------------------------------------------------
-BOOL isXInputDevice(const GUID* pGuidProductFromDirectInput)
-{
-	IWbemLocator*           pIWbemLocator = NULL;
-	IEnumWbemClassObject*   pEnumDevices = NULL;
-	IWbemClassObject*       pDevices[20] = { 0 };
-	IWbemServices*          pIWbemServices = NULL;
-	BSTR                    bstrNamespace = NULL;
-	BSTR                    bstrDeviceID = NULL;
-	BSTR                    bstrClassName = NULL;
-	DWORD                   uReturned = 0;
-	bool                    bIsXinputDevice = false;
-	UINT                    iDevice = 0;
-	VARIANT                 var;
-	HRESULT                 hr;
-
-	// CoInit if needed
-	hr = CoInitialize(NULL);
-	bool bCleanupCOM = SUCCEEDED(hr);
-
-	// Create WMI
-	hr = CoCreateInstance(__uuidof(WbemLocator),
-		NULL,
-		CLSCTX_INPROC_SERVER,
-		__uuidof(IWbemLocator),
-		(LPVOID*)&pIWbemLocator);
-	if (FAILED(hr) || pIWbemLocator == NULL)
-		goto LCleanup;
-
-	bstrNamespace = SysAllocString(L"\\\\.\\root\\cimv2"); if (bstrNamespace == NULL) goto LCleanup;
-	bstrClassName = SysAllocString(L"Win32_PNPEntity");   if (bstrClassName == NULL) goto LCleanup;
-	bstrDeviceID = SysAllocString(L"DeviceID");          if (bstrDeviceID == NULL)  goto LCleanup;
-
-	// Connect to WMI 
-	hr = pIWbemLocator->ConnectServer(bstrNamespace, NULL, NULL, 0L,
-		0L, NULL, NULL, &pIWbemServices);
-	if (FAILED(hr) || pIWbemServices == NULL)
-		goto LCleanup;
-
-	// Switch security level to IMPERSONATE. 
-	CoSetProxyBlanket(pIWbemServices, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, NULL,
-		RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE);
-
-	hr = pIWbemServices->CreateInstanceEnum(bstrClassName, 0, NULL, &pEnumDevices);
-	if (FAILED(hr) || pEnumDevices == NULL)
-		goto LCleanup;
-
-	// Loop over all devices
-	for (;; )
-	{
-		// Get 20 at a time
-		hr = pEnumDevices->Next(10000, 20, pDevices, &uReturned);
-		if (FAILED(hr))
-			goto LCleanup;
-		if (uReturned == 0)
-			break;
-
-		for (iDevice = 0; iDevice<uReturned; iDevice++)
-		{
-			// For each device, get its device ID
-			hr = pDevices[iDevice]->Get(bstrDeviceID, 0L, &var, NULL, NULL);
-			if (SUCCEEDED(hr) && var.vt == VT_BSTR && var.bstrVal != NULL)
-			{
-				// Check if the device ID contains "IG_".  If it does, then it's an XInput device
-				// This information can not be found from DirectInput 
-				if (wcsstr(var.bstrVal, L"IG_"))
-				{
-					// If it does, then get the VID/PID from var.bstrVal
-					DWORD dwPid = 0, dwVid = 0;
-					WCHAR* strVid = wcsstr(var.bstrVal, L"VID_");
-					if (strVid && swscanf_s(strVid, L"VID_%4X", &dwVid) != 1)
-						dwVid = 0;
-					WCHAR* strPid = wcsstr(var.bstrVal, L"PID_");
-					if (strPid && swscanf_s(strPid, L"PID_%4X", &dwPid) != 1)
-						dwPid = 0;
-
-					// Compare the VID/PID to the DInput device
-					DWORD dwVidPid = MAKELONG(dwVid, dwPid);
-					if (dwVidPid == pGuidProductFromDirectInput->Data1)
-					{
-						bIsXinputDevice = true;
-						goto LCleanup;
-					}
-				}
-			}
-			SAFE_RELEASE(pDevices[iDevice]);
-		}
-	}
-
-LCleanup:
-	if (bstrNamespace)
-		SysFreeString(bstrNamespace);
-	if (bstrDeviceID)
-		SysFreeString(bstrDeviceID);
-	if (bstrClassName)
-		SysFreeString(bstrClassName);
-	for (iDevice = 0; iDevice<20; iDevice++)
-		SAFE_RELEASE(pDevices[iDevice]);
-	SAFE_RELEASE(pEnumDevices);
-	SAFE_RELEASE(pIWbemLocator);
-	SAFE_RELEASE(pIWbemServices);
-
-	if (bCleanupCOM)
-		CoUninitialize();
-
-	return bIsXinputDevice;
-}
-
 BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 	HRESULT hr;
 	BOOL xinput = false;
 
-	if (instance->wUsagePage != 1 || instance->wUsage != 5) {
-		// Not an actual game controller (see issue #3)
+	if (!instance) {
 		return DIENUM_CONTINUE;
 	}
 
-	// First check if the device is known
-	auto it = isXInput.find(instance->guidInstance);
-	if (it == isXInput.end()) {
-		// Not found yet, so check if it is an XInputDevice
-		xinput = isXInputDevice(&instance->guidProduct);
-		isXInput[instance->guidInstance] = xinput;
-	} else {
-		xinput = it->second;
-	}
-
-	if (xinput) {
-		// If it is an xinput, we can safely ignore
+	if (instance->wUsagePage != 1 || instance->wUsage != 5) {
+		// Not an actual game controller (see issue #3)
 		return DIENUM_CONTINUE;
 	}
 
@@ -261,6 +75,48 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 		hr = di->CreateDevice(instance->guidProduct, &joystick, NULL);
 		if (FAILED(hr))
 			return DIENUM_CONTINUE;
+	}
+
+	// First check if the device is known
+	auto it = isXInput.find(instance->guidInstance);
+	if (it == isXInput.end()) {
+		// Not found yet, so check if it is an XInputDevice
+
+		// First check if this is a known xinput GUID (because the ig_ detection is not 100% with shield for instance)
+		for (int i = 0; i < sizeof_knownXInputGUID; ++i) {
+			if (memcmp(&instance->guidProduct, &knownXInputGUID[i], sizeof(GUID)) == 0) {
+				xinput = TRUE;
+				break;
+			}
+		}
+
+		if (!xinput) {
+			// We have not found it using the standard ways, check if it checks out with ig_
+			DIPROPGUIDANDPATH  dipdw;
+			dipdw.diph.dwSize = sizeof(DIPROPGUIDANDPATH);
+			dipdw.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+			dipdw.diph.dwObj = 0;
+			dipdw.diph.dwHow = DIPH_DEVICE;
+			// Compared to what is given by microsoft, this does the same thing without the ugly registry for loop
+			hr = joystick->GetProperty(DIPROP_GUIDANDPATH, &dipdw.diph);
+			if (FAILED(hr)) {
+				printf("Cannot fetch GUID & PATH %x\n", hr);
+				joystick->Release();
+				return DIENUM_CONTINUE;
+			}
+			std::wstring wsz(dipdw.wszPath);
+			// even though this does not look safe, this is the official way of detecting
+			xinput = wsz.find(L"ig_") != std::string::npos;
+		}
+		isXInput[instance->guidInstance] = xinput;
+	} else {
+		xinput = it->second;
+	}
+
+	if (xinput) {
+		joystick->Release();
+		// If it is an xinput, we can safely ignore
+		return DIENUM_CONTINUE;
 	}
 
 	// Set the data format to "simple joystick" - a predefined data format 
@@ -327,7 +183,8 @@ void refreshDevices() {
 	// Poll all devices
 	di->EnumDevices(DI8DEVCLASS_GAMECTRL, enumCallback, NULL, DIEDFL_ATTACHEDONLY);
 }
-INT_PTR WINAPI messageCallback(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+
+INT_PTR WINAPI messageCallback(HWND hw, UINT message, WPARAM wParam, LPARAM lParam) {
 	switch (message) {
 		case WM_DEVICECHANGE:
 			if (wParam ==  DBT_DEVICEARRIVAL || wParam == DBT_DEVICEREMOVECOMPLETE) {
@@ -336,52 +193,13 @@ INT_PTR WINAPI messageCallback(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
 			}
 			break;
 
-		case WM_CLOSE:
-			UnregisterDeviceNotification(hDeviceNotify);
-			DestroyWindow(hWnd);
-
-			diAvailable = false;
-			// Releasing resources to avoid crashes
-			for (auto it : joysticks) {
-				if (it.second) {
-					it.second->Unacquire();
-					it.second->Release();
-				}
-			}
-			joysticks.clear();
-			if (di) {
-				di->Release();
-			}
-			di = NULL;
-			break;
-
 		default:
 			// Send all other messages on to the default windows handler.
-			return DefWindowProc(hWnd, message, wParam, lParam);
+			return DefWindowProc(hw, message, wParam, lParam);
 	}
 	return 1;
 }
 
-// Taken from here http://stackoverflow.com/questions/1387064/how-to-get-the-error-message-from-the-error-code-returned-by-getlasterror
-// Returns the last Win32 error, in string format. Returns an empty string if there is no error.
-std::string GetLastErrorAsString()
-{
-	//Get the error message, if any.
-	DWORD errorMessageID = ::GetLastError();
-	if (errorMessageID == 0)
-		return std::string(); //No error message has been recorded
-
-	LPSTR messageBuffer = nullptr;
-	size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-		NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
-
-	std::string message(messageBuffer, size);
-
-	//Free the buffer.
-	LocalFree(messageBuffer);
-
-	return message;
-}
 int setupDInput()
 {
 	if (!diAvailable) {
@@ -435,7 +253,7 @@ int setupDInput()
 
 	if (NULL == hDeviceNotify) {
 		MessageBox(NULL, GetLastErrorAsString().c_str(), "SF5DInput - Registering Device Notification", MB_ICONERROR);
-		exit(1);
+		exit(3);
 	}
 
 	// WOOH we are ready to go!
@@ -565,9 +383,9 @@ DWORD WINAPI hooked_XInputGetState(DWORD dwUserIndex, XINPUT_STATE *pState)
 		}
 
 		// Read XInput
-		for (int i = 0; i < 4; i++) {
+		for (short i = 0; i < 4; i++) {
 			// Read XInputGetStateEx to get the GUIDE button (though it seems to be broken on win10 now)
-			if (ExportByOrdinal100(i, &xinputStates[i]) != ERROR_SUCCESS) {
+			if (XInputGetStateEx_wrapped(i, &xinputStates[i]) != ERROR_SUCCESS) {
 				xinputReady[i] = false;
 				continue;
 			}

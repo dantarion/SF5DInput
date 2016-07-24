@@ -22,6 +22,7 @@
     <ProjectGuid>{3941E9F8-2E29-4D69-8717-F74562ED5301}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>xinput1_3</RootNamespace>
+    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -47,8 +48,10 @@
     <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>true</WholeProgramOptimization>
-    <CharacterSet>NotSet</CharacterSet>
+    <CharacterSet>MultiByte</CharacterSet>
     <PlatformToolset>v140</PlatformToolset>
+    <CLRSupport>false</CLRSupport>
+    <UseOfMfc>false</UseOfMfc>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -128,13 +131,16 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <PrecompiledHeader>
       </PrecompiledHeader>
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;XINPUT1_3_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN64;NDEBUG;_WINDOWS;_USRDLL;XINPUT1_3_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <SDLCheck>true</SDLCheck>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -142,19 +148,31 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <ModuleDefinitionFile>xinput1_3.def</ModuleDefinitionFile>
+      <AdditionalDependencies>dinput8.lib;dxguid.lib;kernel32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <MapExports>true</MapExports>
+      <SetChecksum>true</SetChecksum>
+      <GenerateMapFile>true</GenerateMapFile>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy "$(OutputPath)$(TargetFileName)" "M:\SteamLibrary\SteamApps\common\StreetFighterV\StreetFighterV\Binaries\Win64\" /Y</Command>
+      <Command>xcopy "$(OutputPath)$(TargetFileName)" "D:\Steam\SteamApps\common\StreetFighterV\StreetFighterV\Binaries\Win64\" /Y</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="utils.cpp" />
+    <ClCompile Include="wrapped.cpp" />
     <ClCompile Include="xinput1_3.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="xinput1_3.def" />
-    <MASM Include="xinput1_3_asm.asm">
-      <FileType>Document</FileType>
-    </MASM>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="resource.h" />
+    <ClInclude Include="stdafx.h" />
+    <ClInclude Include="utils.h" />
+    <ClInclude Include="wrapped.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="xinput1_3.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
