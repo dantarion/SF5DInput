@@ -14,8 +14,8 @@ LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,0,3,0
- PRODUCTVERSION 0,0,3,0
+ FILEVERSION 0,0,3,1
+ PRODUCTVERSION 0,0,3,1
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -32,12 +32,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "https://github.com/dantarion/SF5DInput/"
             VALUE "FileDescription", "DirectInput support for StreetFighter (x64)"
-            VALUE "FileVersion", "0.0.3.0"
+            VALUE "FileVersion", "0.0.3.1"
             VALUE "InternalName", "SF5DInput"
             VALUE "LegalCopyright", "Copyright (c) 2016 Eric ""dantarion"" Sheppard"
             VALUE "OriginalFilename", "xinput1_3.dll"
             VALUE "ProductName", "DirectInput support for StreetFighter (x64)"
-            VALUE "ProductVersion", "0.0.3"
+            VALUE "ProductVersion", "0.0.3.1"
         END
     END
     BLOCK "VarFileInfo"
