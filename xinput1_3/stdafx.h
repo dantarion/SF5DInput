@@ -20,6 +20,8 @@
 #include <windows.h>
 #include <process.h>
 #include <xinput.h>
+#pragma comment(lib,"dinput8")
+#pragma comment(lib,"dxguid")
 #include <dinput.h>
 #include <dbt.h>
 
