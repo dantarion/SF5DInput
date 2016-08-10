@@ -5,18 +5,23 @@ This is a drop in DLL replacement for *xinput1_3.dll* that provides DirectInput 
 
 ## How to Use?
 
-Drop all included files into *installdirectory\StreetFighterV\Binaries\Win64\* and launch the game. To uninstall, just remove the dll files from this folder.
+Download the latest version of the dll in the [release section](https://github.com/dantarion/SF5DInput/releases).
+Drop the xinput1_3.dll file into *installdirectory\StreetFighterV\Binaries\Win64\* and launch the game. To uninstall, just remove the dll file from this folder.
 
 ## Features
 
 1. Supports DirectInput as well as XInput devices
-2. By holding the Home Button and left or right on the DPad, you can switch between being player 1 or player 2 on any controller (on XInput controller Start+Back can be used if it's not working).
-3. You can plug or unplug your devices while the game is running
-4. Devices are automatically assigned (first plugged, first player assigned, places are kept).
+2. You can plug or unplug your devices while the game is running
+3. Devices are automatically assigned (first plugged, first player assigned, places are kept).
+4. By holding the Home Button and left or right on the DPad for 2 seconds, you can switch between being player 1 or player 2 on any controller (on XInput controller Start+Back can be used if it's not working).
+
+## Tournament mode
+
+This version of the dll disable controller switch to avoid having a player claiming a slot during a match. The slot allocation and hotplug still works (first plugged, first player assigned).
 
 ## Known Bugs
 
-1. Doesn't work with controllers that use the Analog Joystick, only controllers that use the DPad/Hatswitch
+1. Doesn't work with controllers that use the Analog Joystick, only controllers that use the DPad/Hatswitch (arcade sticks must be in DP mode)
 2. Controllers that aren't PS3/PS4 controllers don't have a way to get proper mapping :(
 
 ## Tested with....
@@ -25,6 +30,9 @@ Drop all included files into *installdirectory\StreetFighterV\Binaries\Win64\* a
 2. Sony DualShock 4
 3. Hori PS4 VLX
 4. PS360+ in any mode
+5. Venom PS4
+6. Madcatz TE2
+7. Hori RAP 4
 
 ## Credits
 
