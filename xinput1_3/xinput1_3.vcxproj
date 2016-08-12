@@ -136,9 +136,6 @@
       <SetChecksum>true</SetChecksum>
       <GenerateMapFile>true</GenerateMapFile>
     </Link>
-    <PostBuildEvent>
-      <Command>xcopy "$(OutputPath)$(TargetFileName)" "M:\SteamLibrary\SteamApps\common\StreetFighterV\StreetFighterV\Binaries\Win64\" /Y</Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="utils.cpp" />
