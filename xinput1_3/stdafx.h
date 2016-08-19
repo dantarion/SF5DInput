@@ -18,10 +18,11 @@
 #define NOMINMAX
 
 #include <windows.h>
-#include <process.h>
+#include <mmsystem.h>
 #include <xinput.h>
 #pragma comment(lib,"dinput8")
 #pragma comment(lib,"dxguid")
+#pragma comment(lib,"winmm")
 #include <dinput.h>
 #include <dbt.h>
 
