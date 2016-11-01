@@ -77,7 +77,12 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 		return DIENUM_CONTINUE;
 	}
 
-	if (instance->wUsagePage != 1 || instance->wUsage != 5) {
+	// USB HID usage tables: http://www.usb.org/developers/hidpage/Hut1_12v2.pdf
+	// * wUsagePage == 1: Generic Desktop Controls
+	// * * wUsage == 4: Joystick
+	// * * wUsage == 5: Game Pad
+	if (instance->wUsagePage != 1 || !(instance->wUsage == 4 || instance->wUsage == 5)) 
+	{
 		// Not an actual game controller (see issue #3)
 		return DIENUM_CONTINUE;
 	}
@@ -99,8 +104,9 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 	if (FAILED(hr)) {
 		// As seen on x360ce, if create device fails on guid instance, try the product
 		hr = di->CreateDevice(instance->guidProduct, &joystick, NULL);
-		if (FAILED(hr))
+		if (FAILED(hr))	{
 			return DIENUM_CONTINUE;
+		}
 	}
 
 	// First check if the device is known
