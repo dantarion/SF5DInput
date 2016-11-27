@@ -443,6 +443,9 @@ void selectController(int desired, const GUID* dinputGUID, short xinputIndex, BO
 	}
 	targetMapping->xinput = xinputIndex;
 	targetMapping->free = false;
+	if (!isNew) {
+		PlaySound(TEXT("Media\\Windows Hardware Insert.wav"), NULL, SND_APPLICATION | SND_ASYNC);
+	}
 }
 
 // XInputGetState implementation
