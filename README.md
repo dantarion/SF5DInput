@@ -10,7 +10,7 @@ Drop the xinput1_3.dll file into *installdirectory\StreetFighterV\Binaries\Win64
 
 ## Features
 
-1. Supports DirectInput as well as XInput devices
+1. Supports DirectInput as well as XInput devices (analog input supported)
 2. You can plug or unplug your devices while the game is running
 3. Devices are automatically assigned (first plugged, first player assigned, places are kept).
 4. By holding the Home Button and left or right on the DPad for 2 seconds, you can switch between being player 1 or player 2 on any controller (on XInput controller Start+Back can be used if it's not working).
@@ -21,8 +21,7 @@ This version of the dll disable controller switch to avoid having a player claim
 
 ## Known Bugs
 
-1. Doesn't work with controllers that use the Analog Joystick, only controllers that use the DPad/Hatswitch (arcade sticks must be in DP mode)
-2. Controllers that aren't PS3/PS4 controllers don't have a way to get proper mapping :(
+1. Controllers that aren't PS3/PS4 controllers don't have a way to get proper mapping :(
 
 ## Tested with....
 
@@ -33,6 +32,7 @@ This version of the dll disable controller switch to avoid having a player claim
 5. Venom PS4
 6. Madcatz TE2
 7. Hori RAP 4
+8. Madcatz TE
 
 ## Credits
 
