@@ -49,6 +49,26 @@ VirtualControllerMapping virtualControllers[2];
 std::unordered_map<GUID, int> dinputControllerChangeTimer;
 int xinputControllerChangeTimer[4] = { -1, -1, -1, -1 };
 
+BOOL CALLBACK enumAxesCallback(LPCDIDEVICEOBJECTINSTANCE lpddoi, LPVOID pvRef) {
+	LPDIRECTINPUTDEVICE8 lpdi = (LPDIRECTINPUTDEVICE8)pvRef;
+	DIPROPRANGE		diPropRange;
+	diPropRange.diph.dwSize = sizeof(DIPROPRANGE);
+	diPropRange.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+	diPropRange.diph.dwHow = DIPH_BYID;
+	diPropRange.diph.dwObj = lpddoi->dwType;
+	diPropRange.lMin = (LONG)-32768;
+	diPropRange.lMax = (LONG)32767;
+
+	//set every axis between SHORT_MIN and SHORT_MAX
+	HRESULT hr = lpdi->SetProperty(DIPROP_RANGE, &diPropRange.diph);
+	if (FAILED(hr)) {
+		printf("Could not set property of joystick axis.");
+		return DIENUM_CONTINUE;
+	}
+
+	return DIENUM_CONTINUE;
+}
+
 BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 	HRESULT hr;
 	BOOL xinput = false;
@@ -152,6 +172,9 @@ BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* context) {
 	dipdw.dwData = DIPROPAUTOCENTER_ON;
 	joystick->SetProperty(DIPROP_AUTOCENTER, &dipdw.diph);
 
+	// normalize all joysticks
+	joystick->EnumObjects(enumAxesCallback, joystick, DIDFT_AXIS);
+
 	// Acquire the device
 	if (FAILED(hr = joystick->Acquire())) {
 		printf("Acquire is fucked %x\n", hr);
@@ -191,6 +214,7 @@ void refreshDevices() {
 	}
 }
 
+#define AXES_ORIENTATION_THRESHOLD XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE*2
 HRESULT poll(LPDIRECTINPUTDEVICE8 joystick, LPDIJOYSTATE2 js) {
 	// Device polling (as seen on x360ce)
 	HRESULT hr = E_FAIL;
@@ -203,6 +227,37 @@ HRESULT poll(LPDIRECTINPUTDEVICE8 joystick, LPDIJOYSTATE2 js) {
 	if (FAILED(hr)) {
 		// Reacquire the device (only once)
 		hr = joystick->Acquire();
+	} else {
+		// if we have succeeded, we can now convert potential analog data into the POV state
+		long LX = js->lX;
+		long LY = js->lY;
+
+		// we simulate a "hatswitch" behaviour (i.e. not radial)
+		boolean up = LY < -AXES_ORIENTATION_THRESHOLD;
+		boolean down = LY > AXES_ORIENTATION_THRESHOLD;
+		boolean left = LX < -AXES_ORIENTATION_THRESHOLD;
+		boolean right = LX > AXES_ORIENTATION_THRESHOLD;
+
+		// now mapping the four booleans to the POV mapping
+		if (left) {
+			if (down)
+				js->rgdwPOV[0] = 5 * 4500;
+			else if (up)
+				js->rgdwPOV[0] = 7 * 4500;
+			else
+				js->rgdwPOV[0] = 6 * 4500;
+		} else if (right) {
+			if (down)
+				js->rgdwPOV[0] = 3 * 4500;
+			else if (up)
+				js->rgdwPOV[0] = 1 * 4500;
+			else
+				js->rgdwPOV[0] = 2 * 4500;
+		} else if (down)
+			js->rgdwPOV[0] = 4 * 4500;
+		else if (up)
+			js->rgdwPOV[0] = 0;
+		// else dont do anything and leave the actual POV value for the DPAD
 	}
 
 	return hr;
