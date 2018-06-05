@@ -34,6 +34,18 @@ This version of the dll disable controller switch to avoid having a player claim
 7. Hori RAP 4
 8. Madcatz TE
 
+## Supported Games
+SF5Dinput actually works with a ton of games other than Street Fighter 5!
+TO test it just drop the dll into the games folder beside its executable, then see if SF5DInput specific features work (like switching from P1->P2, plugging in controllers. Be sure to test with and without the DLL, as many games have DInput support WITHOUT hotplugging support, and its important to know if the DLL is solving problems for the game. For example, the game Nitroplus Blasters already works with hotplugging controllers, so it doesn't actually need anything.
+
+### 64-bit games (need 64-bit DLL build)
+1. Street Fighter 5 (Adds DInput Hotplug)
+### 32-bit games (need 32-bit DLL build)
+1. Ultra Street Fighter 4 (Adds DInput Hotplug) *rename dll to xinput9_1_0.dll*
+2. Blazblue Cross Tag Battle (Adds DInput Hotplug)
+3. Blazblue Central Fiction
+4. Kohime Enbu
+
 ## Credits
 
 * @dantarion
