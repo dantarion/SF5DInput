@@ -1,9 +1,21 @@
 #include "stdafx.h"
 #include "wrapped.h"
+#include "fnv1a.hpp"
 
 // Hashing structure for GUID
 namespace std
 {
+	template<class _Kty>
+	struct _Bitwise_hash
+	{	// hash functor for plain old data
+		typedef _Kty argument_type;
+		typedef size_t result_type;
+
+		size_t operator()(const _Kty& _Keyval) const
+		{	// hash _Keyval to size_t value by pseudorandomizing transform
+			return (fnv1a_hash_bytes((const unsigned char*)&_Keyval, sizeof(_Kty)));
+		}
+	};
 	template<> struct hash<GUID> : public std::_Bitwise_hash<GUID>{};
 }
 // DI stuff
